@@ -1,5 +1,7 @@
 """Freqtrade bot"""
 
+# AI-related functionality (FreqAI machine learning trading) is located under freqtrade.freqai
+
 __version__ = "2026.4-dev"
 
 if "dev" in __version__:

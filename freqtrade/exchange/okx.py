@@ -19,6 +19,10 @@ from freqtrade.util import dt_now, dt_ts
 
 logger = logging.getLogger(__name__)
 
+# OKX API返回的时间戳是北京时间 (UTC+8)
+# 需要减去8小时来纠正时区偏差
+OKX_TIMEZONE_OFFSET_MS = 8 * 60 * 60 * 1000
+
 
 class Okx(Exchange):
     """Okx exchange class.
@@ -195,21 +199,55 @@ class Okx(Exchange):
         return params
 
     def _convert_stop_order(self, pair: str, order_id: str, order: CcxtOrder) -> CcxtOrder:
-        if (
-            order.get("status", "open") == "closed"
-            and (real_order_id := order.get("info", {}).get("ordId")) is not None
-        ):
-            # Once a order triggered, we fetch the regular followup order.
-            order_reg = self.fetch_order(real_order_id, pair)
-            self._log_exchange_response("fetch_stoploss_order1", order_reg)
-            order_reg["id_stop"] = order_reg["id"]
-            order_reg["id"] = order_id
-            order_reg["type"] = "stoploss"
-            order_reg["status_stop"] = "triggered"
-            return order_reg
+        if order.get("status", "open") == "closed":
+            real_order_id = order.get("info", {}).get("ordId")
+            if real_order_id is not None:
+                # Once a order triggered, we fetch the regular followup order.
+                order_reg = self.fetch_order(real_order_id, pair)
+                self._log_exchange_response("fetch_stoploss_order1", order_reg)
+                order_reg["id_stop"] = order_reg["id"]
+                order_reg["id"] = order_id
+                order_reg["type"] = "stoploss"
+                order_reg["status_stop"] = "triggered"
+                return order_reg
         order = self._order_contracts_to_amount(order)
         order["type"] = "stoploss"
         return order
+
+    @retrier
+    def fetch_order(self, order_id: str, pair: str, params: dict | None = None) -> CcxtOrder:
+        """
+        Fetch a single order with timezone correction for OKX.
+        OKX API返回的时间戳是北京时间 (UTC+8)，需要减去8小时来纠正时区偏差。
+        """
+        if self._config["dry_run"]:
+            return self.fetch_dry_run_order(order_id)
+        if params is None:
+            params = {}
+        try:
+            if not self.exchange_has("fetchOrder"):
+                return self.fetch_order_emulated(order_id, pair, params)
+            order = self._api.fetch_order(order_id, pair, params=params)
+            self._log_exchange_response("fetch_order", order)
+            order = self._order_contracts_to_amount(order)
+            order = self._adjust_timestamps_for_okx_single(order)
+            return order
+        except ccxt.OrderNotFound as e:
+            raise RetryableOrderError(
+                f"Order not found (pair: {pair} id: {order_id}). Message: {e}"
+            ) from e
+        except ccxt.InvalidOrder as e:
+            raise InvalidOrderException(
+                f"Tried to get an invalid order (pair: {pair} id: {order_id}). Message: {e}"
+            ) from e
+        except ccxt.DDoSProtection as e:
+            raise DDosProtection(e) from e
+        except (ccxt.OperationFailed, ccxt.ExchangeError) as e:
+            raise TemporaryError(
+                f"Could not get order due to {e.__class__.__name__}. Message: {e}"
+            ) from e
+        except ccxt.BaseError as e:
+            raise OperationalException(e) from e
 
     @retrier(retries=API_RETRY_COUNT)
     def fetch_stoploss_order(
@@ -222,6 +260,8 @@ class Okx(Exchange):
             params1 = {"stop": True}
             order_reg = self._api.fetch_order(order_id, pair, params=params1)
             self._log_exchange_response("fetch_stoploss_order", order_reg)
+            order_reg = self._order_contracts_to_amount(order_reg)
+            order_reg = self._adjust_timestamps_for_okx_single(order_reg)
             return self._convert_stop_order(pair, order_id, order_reg)
         except (ccxt.OrderNotFound, ccxt.InvalidOrder):
             pass
@@ -245,6 +285,7 @@ class Okx(Exchange):
         ):
             try:
                 orders = method(pair, params=params2)
+                orders = self._adjust_timestamps_for_okx(orders)
                 orders_f = [order for order in orders if order["id"] == order_id]
                 if orders_f:
                     order = orders_f[0]
@@ -274,7 +315,79 @@ class Okx(Exchange):
 
         orders_open = self._api.fetch_open_orders(pair, since=since_ms)
         orders.extend(orders_open)
+
+        return self._adjust_timestamps_for_okx(orders)
+
+    @retrier(retries=0)
+    def _fetch_orders(
+        self, pair: str, since: datetime, params: dict | None = None
+    ) -> list[CcxtOrder]:
+        """
+        Fetch orders for a pair, with timezone correction for OKX.
+        OKX API返回的时间戳是北京时间 (UTC+8)，需要减去8小时来纠正时区偏差。
+        """
+        if self._config["dry_run"]:
+            return []
+
+        try:
+            since_ms = int((since.timestamp() - 10) * 1000)
+
+            if self.exchange_has("fetchOrders"):
+                if not params:
+                    params = {}
+                try:
+                    orders: list[CcxtOrder] = self._api.fetch_orders(
+                        pair, since=since_ms, params=params
+                    )
+                except ccxt.NotSupported:
+                    orders = self._fetch_orders_emulate(pair, since_ms)
+            else:
+                orders = self._fetch_orders_emulate(pair, since_ms)
+            self._log_exchange_response("fetch_orders", orders)
+            orders = [self._order_contracts_to_amount(o) for o in orders]
+            orders = self._adjust_timestamps_for_okx(orders)
+            return orders
+        except ccxt.DDoSProtection as e:
+            raise DDosProtection(e) from e
+        except (ccxt.OperationFailed, ccxt.ExchangeError) as e:
+            raise TemporaryError(
+                f"Could not fetch orders due to {e.__class__.__name__}. Message: {e}"
+            ) from e
+        except ccxt.BaseError as e:
+            raise OperationalException(e) from e
+
+    def _adjust_timestamps_for_okx(self, orders: list[CcxtOrder]) -> list[CcxtOrder]:
+        """
+        OKX API返回的时间戳是北京时间 (UTC+8)，但ccxt将其当作UTC处理。
+        此方法将时间戳减去8小时以纠正时区偏差。
+
+        :param orders: OKX返回的订单列表
+        :return: 修正后的订单列表
+        """
+        timestamp_fields = ["timestamp", "lastTradeTimestamp", "datetime"]
+
+        for order in orders:
+            for field in timestamp_fields:
+                if field in order and order[field] is not None:
+                    order[field] = order[field] - OKX_TIMEZONE_OFFSET_MS
+
         return orders
+
+    def _adjust_timestamps_for_okx_single(self, order: CcxtOrder) -> CcxtOrder:
+        """
+        OKX API返回的时间戳是北京时间 (UTC+8)，但ccxt将其当作UTC处理。
+        此方法将时间戳减去8小时以纠正时区偏差（适用于单个订单）。
+
+        :param order: OKX返回的单个订单
+        :return: 修正后的订单
+        """
+        timestamp_fields = ["timestamp", "lastTradeTimestamp", "datetime"]
+
+        for field in timestamp_fields:
+            if field in order and order[field] is not None:
+                order[field] = order[field] - OKX_TIMEZONE_OFFSET_MS
+
+        return order
 
 
 class Myokx(Okx):
