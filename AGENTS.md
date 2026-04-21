@@ -60,10 +60,10 @@ pre-commit run -a
 
 | Bot | Service | Port | Config | 策略 |
 |-----|---------|------|--------|------|
-| Long Bot | freqtrade | 8888 | config.json | RecoveryStrategyLong |
-| Short Bot | freqtrade-short | 8889 | configShort2.json | RecoveryStrategyShort |
+| Long Bot | freqtrade | 8888 | configLong.json | RecoveryStrategyLong |
+| Short Bot | freqtrade-short | 8889 | configShort.json | RecoveryStrategyShort |
 
-**共用同一数据库**，短期无冲突（一个跑一个停）。
+**共用同一数据库**，同时只有一个运行（一个跑一个停）。
 
 ### Bot Management
 ```bash
@@ -142,20 +142,18 @@ After config change, bot enters STOPPED state - must call `/api/v1/start` API to
 ### 配置文件说明
 - `configLong.json` - Long策略专用配置 (minimal_roi: 2%/1.5%/0.5%, stoploss: -3%)
 - `configShort.json` - Short策略专用配置 (minimal_roi: 2%/1.5%/1%, stoploss: -5%)
-- `config.json` - 当前运行的配置文件 (由strategy_switch.py动态切换)
 - `config_blacklist_annotated.json` - 黑名单分析
 
 ### 服务器配置文件位置
-- `/data/freqtrade/config.json` - 当前运行配置
-- `/data/freqtrade/configLong.json` - Long策略配置备份
-- `/data/freqtrade/configShort.json` - Short策略配置备份
+- `/data/freqtrade/configLong.json` - Long策略配置
+- `/data/freqtrade/configShort.json` - Short策略配置
 - `/data/freqtrade/user_data/strategies/` - 策略文件目录
 
 ### 策略切换逻辑
 切换策略时，strategy_switch.py会:
 1. 读取 `/tmp/market_analysis.json` 分析结果
-2. 复制对应配置文件到 `/data/freqtrade/config.json`
-3. 重启freqtrade服务
+2. 停止当前运行的Bot
+3. 启动另一个方向的Bot
 4. 调用 `/api/v1/start` 启动Bot
 
 ### Blacklisted Pairs (2026-04-15 Analysis)
