@@ -1,18 +1,5 @@
 # Freqtrade AGENTS.md
 
-## AI Functionality (FreqAI)
-
-All AI/ML trading functionality is in `freqtrade/freqai/`. Key components:
-- `freqtrade/freqai/freqai_interface.py` - Main FreqAI interface
-- `freqtrade/freqai/data_kitchen.py` - Data preprocessing and feature engineering
-- `freqtrade/freqai/data_drawer.py` - Model persistence and history
-- `freqtrade/freqai/prediction_models/` - ML model implementations (LSTM, XGBoost, LightGBM, etc.)
-- `freqtrade/freqai/base_models/` - Base model classes
-- `freqtrade/freqai/torch/` - PyTorch utilities
-- `freqtrade/freqai/RL/` - Reinforcement learning components
-
-FreqAI is enabled via `config.json` with `freqai: {..., "enabled": true}`.
-
 ## Dev Setup
 
 ```bash
@@ -40,11 +27,6 @@ pre-commit run -a
 - PRs go to `develop` branch, not `stable`
 - Install pre-commit: `pre-commit install`
 
-## Entry Points
-
-- `freqtrade` command → `freqtrade.main:main`
-- FreqAI config schema → `build_helpers/extract_config_json_schema.py`
-
 ---
 
 ## Trading Bot Server (47.108.169.101)
@@ -53,211 +35,215 @@ pre-commit run -a
 - IP: 47.108.169.101
 - SSH: `ssh root@47.108.169.101`
 - Strategies: `/data/freqtrade/user_data/strategies/`
+- Freqtrade source: `/data/freqtrade/freqtrade/`
+- Venv: `/data/venv/bin/`
 - API Auth: `freqtrade:freqtrade123`
 
-### 双Bot架构 (Dual Bot)
-两个Bot同时部署，通过API启停实现零 downtime 切换：
-
-| Bot | Service | Port | Config | 策略 |
-|-----|---------|------|--------|------|
-| Long Bot | freqtrade | 8888 | configLong.json | RecoveryStrategyLong |
-| Short Bot | freqtrade-short | 8889 | configShort.json | RecoveryStrategyShort |
-
-**共用同一数据库**，同时只有一个运行（一个跑一个停）。
+### 单Bot架构 (当前)
+| 项目 | 值 |
+|-----|-----|
+| Service | freqtrade |
+| Port | 8888 |
+| Config | configLong.json |
+| 策略 | RecoveryStrategyMulti |
 
 ### Bot Management
 ```bash
-# systemctl 管理
+# systemctl
 ssh root@47.108.169.101 "systemctl restart freqtrade"
-ssh root@47.108.169.101 "systemctl restart freqtrade-short"
-ssh root@47.108.169.101 "systemctl status freqtrade freqtrade-short"
+ssh root@47.108.169.101 "systemctl status freqtrade"
 
-# API 管理 (切换使用)
+# API
 curl -s -X POST http://127.0.0.1:8888/api/v1/start -H 'Authorization: Basic ZnJlcXRyYWRlOmZyZXF0cmFkZTEyMw=='
 curl -s -X POST http://127.0.0.1:8888/api/v1/stop -H 'Authorization: Basic ZnJlcXRyYWRlOmZyZXF0cmFkZTEyMw=='
-curl -s -X POST http://127.0.0.1:8889/api/v1/start -H 'Authorization: Basic ZnJlcXRyYWRlOmZyZXF0cmFkZTEyMw=='
-curl -s -X POST http://127.0.0.1:8889/api/v1/stop -H 'Authorization: Basic ZnJlcXRyYWRlOmZyZXF0cmFkZTEyMw=='
-```
 
-### OKX WebSocket Configuration (Important)
-OKX WebSocket connections may fail due to rate limits. To use REST API instead, add to exchange config:
-```json
-"exchange": {
-    "name": "okx",
-    "_ft_has_params": {
-        "ws_enabled": false
-    }
-}
-```
-After config change, bot enters STOPPED state - must call `/api/v1/start` API to resume trading.
-
-### Troubleshooting No Trades
-- Bot in STOPPED state after restart: call `/api/v1/start`
-- WebSocket errors: check `journalctl -u freqtrade | grep ERROR`
-- RateLimit issues: OKX API rate limits (code 50011) - wait or reduce whitelist size
-- Incompatible pairs removed 2026-04-15: SATS, MATIC, MKR, FTM, STG
-
-### Start Bot (no SSH needed)
-```bash
+# 快速启动
 ./ai/shell/startbot.sh
 ```
 
----
+### OKX WebSocket
+OKX WebSocket may fail due to rate limits. Config中已设置 `ws_enabled: false`。重启后Bot进入STOPPED状态，需调用 `/api/v1/start` 恢复交易。
 
-## Trading Strategies
-
-### Available Strategies
-- `RecoveryStrategyLong.py` - 做多策略 (RSI < 30 entry, trailing stop)
-- `RecoveryStrategyShort.py` - 做空策略 (RSI > 60 entry)
-
-### ATR 动态杠杆 (ATR Percentile Dynamic Leverage)
-策略内置ATR分位数法动态杠杆，根据市场波动率自动调整：
-
-| ATR分位数排名 | 波动状态 | 杠杆 |
-|--------------|----------|------|
-| > 80% | 极高波动 | 1X |
-| 60% - 80% | 高波动 | 2X |
-| 40% - 60% | 中波动 | 3X |
-| < 40% | 低波动 | 4X |
-
-**计算逻辑**：
-1. 获取最近20根K线计算ATR
-2. 计算ATR占价格百分比
-3. 与历史ATR%分位数对比
-4. 根据分位数确定杠杆档位
-
-### Strategy Parameters
-| Param | Long | Short |
-|-------|------|-------|
-| stoploss | -3% | -10% |
-| trailing_stop_positive | 3% | 3% |
-| trailing_stop_offset | 5% | 5% |
-| minimal_roi | 5%/8%/10% | 1.5%/1%/0.5% |
-| max_leverage | 4X | 4X | |
+### Troubleshooting
+- Bot STOPPED after restart: call `/api/v1/start`
+- WebSocket errors: `journalctl -u freqtrade | grep ERROR`
+- RateLimit (code 50011): wait or reduce whitelist size
+- 已移除 incompatible pairs (2026-04-15): SATS, MATIC, MKR, FTM, STG
 
 ---
 
-## Config Files (ai/config/)
+## RecoveryStrategyMulti (当前策略)
 
-### 配置文件说明
-- `configLong.json` - Long策略专用配置 (minimal_roi: 2%/1.5%/0.5%, stoploss: -3%)
-- `configShort.json` - Short策略专用配置 (minimal_roi: 2%/1.5%/1%, stoploss: -5%)
-- `config_blacklist_annotated.json` - 黑名单分析
+### 核心参数
+| 参数 | 值 |
+|-----|-----|
+| timeframe | 5m |
+| can_short | True |
+| stoploss (Long/Short) | -3% / -3% |
+| trailing_stop | True |
+| trailing_stop_positive | **1.5%** |
+| trailing_stop_positive_offset | **2%** |
+| trailing_only_offset_is_reached | True |
+| use_custom_stoploss | True |
+| max_hours_before_force_entry | 12 |
 
-### 服务器配置文件位置
-- `/data/freqtrade/configLong.json` - Long策略配置
-- `/data/freqtrade/configShort.json` - Short策略配置
-- `/data/freqtrade/user_data/strategies/` - 策略文件目录
+### 方向风控
+- **同方向最大持仓数**：`max_open_trades // 2 + 1`（当前 max_open=7，即同方向最多4笔）
+- 超过限制时 `confirm_trade_entry` 返回 False，拒绝新入场
+- 保证至少有 3 个 slot 给另一方向
 
-### 策略切换逻辑
-切换策略时，strategy_switch.py会:
-1. 读取 `/tmp/market_analysis.json` 分析结果
-2. 停止当前运行的Bot
-3. 启动另一个方向的Bot
-4. 调用 `/api/v1/start` 启动Bot
+### 趋势过滤 (EMA200)
+- Long 只在价格 > EMA200 时入场（上升趋势做多）
+- Short 只在价格 < EMA200 时入场（下降趋势做空）
+- 避免逆势扎堆单一方向
 
-### Blacklisted Pairs (2026-04-15 Analysis)
-17 high-loss pairs identified:
-- Worst: NEIRO (14% winrate, -0.71 USDT), TURBO (-0.56 USDT), BOME (-0.54 USDT)
-- See `ai/config/config_blacklist_annotated.json` for full analysis
+### Entry 信号
+| 方向 | 条件 |
+|------|------|
+| Long | RSI < 30, slowk < 30, atr% < 2.5, close > EMA200 |
+| Short | RSI > 60, slowk > 40, atr% < 3.0, close < EMA200 |
+
+### Exit 信号
+| 方向 | 条件 |
+|------|------|
+| Long | fisher_rsi > 0.5 AND RSI > 70 |
+| Short | fisher_rsi < -0.5 AND RSI > 80 |
+
+### Minimal ROI (custom_exit)
+| 持仓时长 | Long | Short |
+|---------|------|-------|
+| 0min | 2% | 1.5% |
+| 30min | 5% | 2% |
+| 60min | 8% | 1% |
+
+### ATR 动态杠杆
+| ATR分位数 | 波动状态 | 杠杆 |
+|----------|---------|------|
+| > 80% | 极高波动 | 2X |
+| 60% - 80% | 高波动 | 3X |
+| 40% - 60% | 中波动 | 4X |
+| < 40% | 低波动 | 5X |
+
+注：configLong.json 中 max_leverage=4，实际杠杆上限为4X
+
+---
+
+## Config Files
+
+| 文件 | 位置 | 说明 |
+|-----|------|------|
+| configLong.json | 本地: `ai/config/`，服务器: `/data/freqtrade/` | **当前使用** |
+| configShort.json | 服务器: `/data/freqtrade/` | 历史遗留，已废弃 |
+| RecoveryStrategyMulti.py | 本地: 项目根目录，服务器: `/data/freqtrade/user_data/strategies/` | 当前策略 |
+
+**注意**：配置文件中已删除 `minimal_roi` 和 `stoploss` 覆盖，让策略文件的值生效。
+
+### configLong.json 关键参数
+| 参数 | 值 |
+|-----|-----|
+| max_open_trades | 10 |
+| stake_amount | 10 USDT |
+| dry_run | false |
+| trading_mode | futures |
+| margin_mode | isolated |
+| max_leverage | 4 |
+| trailing_stop | true |
+| trailing_stop_positive | 0.015 |
+| trailing_stop_positive_offset | 0.02 |
+| use_custom_stoploss | true |
+| strategy | RecoveryStrategyMulti |
+| ws_enabled | false |
+
+### Blacklisted Pairs (2026-04-15)
+17 high-loss pairs identified. Worst: NEIRO (14% winrate, -0.71 USDT), TURBO, BOME.
+See `ai/config/config_blacklist_annotated.json` for full list.
 
 ---
 
 ## Scripts (ai/shell/)
 
-- `startbot.sh` - Start bot via REST API
-- `market_analysis.py` - 市场分析脚本，分析最近20条(60%权重)和50条(40%权重)交易
-- `strategy_switch.py` - 策略自动切换脚本，读取分析结果切换策略并调用 `/api/v1/start` 启动Bot
-- Strategy files deployed to server at `/data/freqtrade/user_data/strategies/`
+| 脚本 | 说明 |
+|-----|------|
+| startbot.sh | Start bot via REST API |
+| market_analysis.py | 市场分析，直接查询PostgreSQL |
+| strategy_switch.py | 历史遗留（Multi策略已不需要手动切换） |
 
-### 自动策略切换流程
-1. `scheduler.sh` 每30分钟运行 `trading_agents_bridge.py`
-2. `market_analysis.py` 分析最近20条(权重60%)和50条(权重40%)交易
-3. 生成 `/tmp/market_analysis.json` 包含推荐方向(LONG/SHORT/KEEP_CURRENT)
-4. `strategy_switch.py` 读取分析结果，决定是否切换策略
-5. 切换后调用 `/api/v1/start` 确保Bot进入RUNNING状态
-6. 发送邮件通知
+### market_analysis.py
+- 直接查询PostgreSQL数据库（不通过API）
+- 按 `ORDER BY id DESC` 获取最新交易
+- 分别获取 Long/Short 最近10条 + 10-20条
+- 胜率加权：60%×最近10条 + 40%×10-20条
+- 评分算法：盈利基础分10分 + 盈亏差距分(上限40) + 胜率差距分(上限20) + trailing_stop惩罚
+
+### 数据库查询方式
+```bash
+ssh root@47.108.169.101 "sudo -u postgres psql -d trading -c 'SELECT ... FROM trades ORDER BY id DESC LIMIT 10;'"
+```
 
 ---
 
 ## Database Schema (PostgreSQL)
 
-### trades table
-Freqtrade uses PostgreSQL for trade persistence.
+### trades table 关键字段
+| 列 | 类型 | 说明 |
+|----|------|------|
+| id | SERIAL PK | |
+| pair | VARCHAR(25) | 交易对 (BTC/USDT:USDT) |
+| is_open | BOOLEAN | 是否持仓中 |
+| is_short | BOOLEAN | 做空标记 |
+| open_rate | DOUBLE | 开仓价格 |
+| close_rate | DOUBLE | 平仓价格 |
+| open_date | TIMESTAMP | 开仓时间 (naive, CST) |
+| close_date | TIMESTAMP | 平仓时间 (naive, CST, **已修复时区bug**) |
+| close_profit_abs | DOUBLE | 实际盈亏(USDT) |
+| stop_loss_pct | DOUBLE | 止损百分比 |
+| is_stop_trailing | BOOLEAN | 是否移动止损 |
+| exit_reason | VARCHAR(255) | 平仓原因 |
+| strategy | VARCHAR(100) | 策略名 |
+| leverage | DOUBLE | 杠杆倍数 |
+| stake_amount | DOUBLE | 投入金额 |
+| amount | DOUBLE | 交易数量 |
+| funding_fees | DOUBLE | 累计资金费率 |
 
-```sql
-CREATE TABLE trades (
-    id                      SERIAL PRIMARY KEY,
-    exchange                VARCHAR(25) NOT NULL,
-    pair                   VARCHAR(25) NOT NULL,
-    base_currency           VARCHAR(25),
-    stake_currency         VARCHAR(25),
-    is_open               BOOLEAN NOT NULL,
-    fee_open              DOUBLE PRECISION NOT NULL,
-    fee_open_cost         DOUBLE PRECISION,
-    fee_open_currency     VARCHAR(25),
-    fee_close             DOUBLE PRECISION NOT NULL,
-    fee_close_cost        DOUBLE PRECISION,
-    fee_close_currency    VARCHAR(25),
-    open_rate             DOUBLE PRECISION NOT NULL,
-    open_rate_requested   DOUBLE PRECISION,
-    open_trade_value     DOUBLE PRECISION,
-    close_rate            DOUBLE PRECISION,
-    close_rate_requested  DOUBLE PRECISION,
-    realized_profit       DOUBLE PRECISION,
-    close_profit          DOUBLE PRECISION,
-    close_profit_abs     DOUBLE PRECISION,
-    stake_amount         DOUBLE PRECISION NOT NULL,
-    max_stake_amount     DOUBLE PRECISION,
-    amount               DOUBLE PRECISION NOT NULL,
-    amount_requested     DOUBLE PRECISION,
-    open_date            TIMESTAMP NOT NULL,
-    close_date           TIMESTAMP,
-    stop_loss            DOUBLE PRECISION,
-    stop_loss_pct         DOUBLE PRECISION,
-    initial_stop_loss    DOUBLE PRECISION,
-    initial_stop_loss_pct DOUBLE PRECISION,
-    is_stop_trailing     BOOLEAN NOT NULL,
-    max_rate             DOUBLE PRECISION,
-    min_rate             DOUBLE PRECISION,
-    exit_reason          VARCHAR(255),
-    exit_order_status    VARCHAR(100),
-    strategy             VARCHAR(100),
-    enter_tag            VARCHAR(255),
-    timeframe             INTEGER,
-    trading_mode         TRADING_MODE,
-    amount_precision    DOUBLE PRECISION,
-    price_precision     DOUBLE PRECISION,
-    precision_mode      INTEGER,
-    precision_mode_price INTEGER,
-    contract_size       DOUBLE PRECISION,
-    leverage            DOUBLE PRECISION,
-    is_short            BOOLEAN NOT NULL,
-    liquidation_price   DOUBLE PRECISION,
-    interest_rate      DOUBLE PRECISION NOT NULL,
-    funding_fees       DOUBLE PRECISION,
-    funding_fee_running DOUBLE PRECISION,
-    record_version     INTEGER NOT NULL
-);
+索引: `ix_trades_pair(pair)`, `ix_trades_is_open(is_open)`
 
-COMMENT ON TABLE trades IS 'Freqtrade交易记录表';
-COMMENT ON COLUMN trades.exchange IS '交易所名称（如 binance、bybit）';
-COMMENT ON COLUMN trades.pair IS '交易对（如 BTC/USDT:USDT）';
-COMMENT ON COLUMN trades.base_currency IS '基础货币（如 BTC）';
-COMMENT ON COLUMN trades.stake_currency IS '计价货币（如 USDT）';
-COMMENT ON COLUMN trades.is_open IS '是否持仓中（true=开仓，false=已平仓';
-COMMENT ON COLUMN trades.fee_open IS '开仓费率（百分比，如 0.001 = 0.1%';
-COMMENT ON COLUMN trades.fee_open_cost IS '开仓实际手续费金额';
-COMMENT ON COLUMN trades.close_rate IS '实际平仓价格';
-COMMENT ON COLUMN trades.realized_profit IS '已实现盈亏（含手续费';
-COMMENT ON COLUMN trades.stop_loss_pct IS '止损百分比（相对于开仓价';
-COMMENT ON COLUMN trades.initial_stop_loss_pct IS '开仓时初始止损百分比';
-COMMENT ON COLUMN trades.is_stop_trailing IS '是否启用移动止损';
-COMMENT ON COLUMN trades.exit_reason IS '平仓原因（stop_loss、roi、exit_signal、force_exit_time_XXh_no_profit 等';
-COMMENT ON COLUMN trades.trading_mode IS '交易模式（spot、futures、margin）';
-COMMENT ON COLUMN trades.leverage IS '杠杆倍数（现货=1，合约 >1';
-COMMENT ON COLUMN trades.funding_fees IS '累计资金费率（正值=支付，负值=收取';
+---
 
-CREATE INDEX ix_trades_pair ON trades(pair);
-CREATE INDEX ix_trades_is_open ON trades(is_open);
+## Bug修复记录
+
+### close_date 时区Bug (2026-04-24 ✅)
+
+**问题**：`close_date` 多了8小时，`open_date` 正确。
+
+**根因**：服务器CST时区 + `TIMESTAMP WITHOUT TIME ZONE` 列 + psycopg2对aware/naive datetime的不同处理 + `date_last_filled_utc` 属性错误地把naive DB值标记为UTC导致二次写入时+8h。
+
+**修复**（两处）：
+```python
+# freqtrade/persistence/trade_model.py:946
+self.close_date = (self.close_date or self._date_last_filled_utc or dt_now()).replace(tzinfo=None)
+
+# freqtrade/freqtradebot.py:554
+trade.close_date = trade.date_last_filled_utc.replace(tzinfo=None)
 ```
+
+**数据库修复**：`UPDATE trades SET close_date = close_date - interval '8 hours' WHERE is_open = false AND close_date IS NOT NULL;` (524条)
+
+**状态**：✅ 已修复，待观察新交易验证
+
+### ATR杠杆调试日志 (2026-04-23 ✅)
+
+**问题**：杠杆始终为2X。已在 `calculate_atr_percentile_leverage` 添加日志：`logger.info(f"{pair} ATR%: {atr_percent_current:.4f}, percentile: {percentile:.2f}, leverage: {leverage}")`
+
+---
+
+## 参数修改历史
+
+| 日期 | 修改 | 原因 |
+|-----|------|------|
+| 04-23 | Long Entry atr% <3.0→<2.5 | 减少高波动入场 |
+| 04-23 | Short Entry RSI >65→>60, slowk >55→>40 | 增加Short信号 |
+| 04-23 | Short Exit RSI <30→>80 | 修正反向逻辑 |
+| 04-23 | Long stoploss -2%→-3% | 降低止损率 |
+| 04-23 | trailing_stop_positive 0.05→0.03, offset 0.08→0.04 | 更早锁定利润 |
+| 04-24 | trailing_stop_positive 0.03→**0.015**, offset 0.04→**0.02** | 多数交易max偏移3-4%即回落，需更早追踪 |
+| 04-24 | close_date 时区bug修复 | psycopg2 aware/naive处理差异 |

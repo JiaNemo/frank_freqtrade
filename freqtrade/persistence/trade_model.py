@@ -943,7 +943,7 @@ class LocalTrade:
         and marks trade as closed
         """
         self.close_rate = rate
-        self.close_date = self.close_date or self._date_last_filled_utc or dt_now()
+        self.close_date = (self.close_date or self._date_last_filled_utc or dt_now()).replace(tzinfo=None)
         self.is_open = False
         self.exit_order_status = "closed"
         self.recalc_trade_from_orders(is_closing=True)

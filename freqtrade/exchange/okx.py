@@ -389,6 +389,32 @@ class Okx(Exchange):
 
         return order
 
+    def create_order(
+        self,
+        *,
+        pair: str,
+        ordertype: str,
+        side: BuySell,
+        amount: float,
+        rate: float,
+        leverage: float,
+        time_in_force: str = "GTC",
+        reduceOnly: bool = False,
+        initial_order: bool = True,
+    ) -> CcxtOrder:
+        order = super().create_order(
+            pair=pair,
+            ordertype=ordertype,
+            side=side,
+            amount=amount,
+            rate=rate,
+            leverage=leverage,
+            time_in_force=time_in_force,
+            reduceOnly=reduceOnly,
+            initial_order=initial_order,
+        )
+        return self._adjust_timestamps_for_okx_single(order)
+
 
 class Myokx(Okx):
     """MyOkx exchange class.

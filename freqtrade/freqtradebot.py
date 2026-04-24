@@ -551,7 +551,7 @@ class FreqtradeBot(LoggingMixin):
             Trade.session.refresh(trade)
             if not trade.is_open:
                 # Trade was just closed
-                trade.close_date = trade.date_last_filled_utc
+                trade.close_date = trade.date_last_filled_utc.replace(tzinfo=None)
                 self.order_close_notify(
                     trade,
                     order_obj,
