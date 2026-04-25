@@ -211,24 +211,19 @@ ssh root@47.108.169.101 "sudo -u postgres psql -d trading -c 'SELECT ... FROM tr
 
 ## Bug修复记录
 
-### close_date 时区Bug (2026-04-24 ✅)
+### close_date 时区Bug (2026-04-24 ✅ v3)
 
 **问题**：`close_date` 多了8小时，`open_date` 正确。
 
-**根因**：服务器CST时区 + `TIMESTAMP WITHOUT TIME ZONE` 列 + psycopg2对aware/naive datetime的不同处理 + `date_last_filled_utc` 属性错误地把naive DB值标记为UTC导致二次写入时+8h。
+**根因链**：PostgreSQL/psycopg2存储UTC aware datetime时自动转为CST，但`order_filled_utc`属性用`.replace(tzinfo=UTC)`把CST naive值错误标记为UTC。`date_last_filled_utc`返回"假UTC"，`astimezone()`再加8h → 多8h。
 
-**修复**（两处）：
-```python
-# freqtrade/persistence/trade_model.py:946
-self.close_date = (self.close_date or self._date_last_filled_utc or dt_now()).replace(tzinfo=None)
+**v3修复**：不走`date_last_filled_utc`，直接用`order_filled_date`（DB中已是CST naive）：
+- `trade_model.py` close()方法：找最后filled order，取`order_filled_date`
+- `freqtradebot.py` handle_left_open()：同上
 
-# freqtrade/freqtradebot.py:554
-trade.close_date = trade.date_last_filled_utc.replace(tzinfo=None)
-```
+**数据库修复**：从`orders.order_filled_date`恢复全部495条close_date
 
-**数据库修复**：`UPDATE trades SET close_date = close_date - interval '8 hours' WHERE is_open = false AND close_date IS NOT NULL;` (524条)
-
-**状态**：✅ 已修复，待观察新交易验证
+**状态**：✅ v3已修复，Bot已重启
 
 ### ATR杠杆调试日志 (2026-04-23 ✅)
 
@@ -246,4 +241,4 @@ trade.close_date = trade.date_last_filled_utc.replace(tzinfo=None)
 | 04-23 | Long stoploss -2%→-3% | 降低止损率 |
 | 04-23 | trailing_stop_positive 0.05→0.03, offset 0.08→0.04 | 更早锁定利润 |
 | 04-24 | trailing_stop_positive 0.03→**0.015**, offset 0.04→**0.02** | 多数交易max偏移3-4%即回落，需更早追踪 |
-| 04-24 | close_date 时区bug修复 | psycopg2 aware/naive处理差异 |
+| 04-24 | close_date 时区bug v3修复 | order_filled_utc假UTC问题，改用order_filled_date |
