@@ -215,7 +215,7 @@ class Order(ModelBase):
         self.stop_price = safe_value_fallback(order, "stopPrice", default_value=self.stop_price)
         order_date = safe_value_fallback(order, "timestamp")
         if order_date:
-            self.order_date = dt_from_ts(order_date)
+            self.order_date = dt_from_ts(order_date).astimezone().replace(tzinfo=None)
         elif not self.order_date:
             self.order_date = dt_now()
 
@@ -224,7 +224,7 @@ class Order(ModelBase):
             self.ft_is_open = False
             if (order.get("filled", 0.0) or 0.0) > 0 and not self.order_filled_date:
                 self.order_filled_date = dt_from_ts(
-                    safe_value_fallback(order, "lastTradeTimestamp", default_value=dt_ts())
+                    safe_value_fallback(order, "lastTradeTimestamp", default_value=dt_ts()).astimezone().replace(tzinfo=None)
                 )
         self.order_update_date = datetime.now(UTC)
 

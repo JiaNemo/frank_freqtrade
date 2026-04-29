@@ -446,6 +446,13 @@ class FreqtradeBot(LoggingMixin):
             except ExchangeError as e:
                 logger.warning(f"Error updating Order {order.order_id} due to {e}")
 
+            except Exception as e:
+                logger.error(
+                    f"Unexpected error updating Order {order.order_id} "
+                    f"for trade {order.ft_trade_id} ({order.ft_pair}): {e}. "
+                    "Skipping this order to prevent bot crash loop."
+                )
+
     def update_trades_without_assigned_fees(self) -> None:
         """
         Update closed trades without close fees assigned.
@@ -537,7 +544,7 @@ class FreqtradeBot(LoggingMixin):
 
                     order_obj = Order.parse_from_ccxt_object(order, trade.pair, order["side"])
                     order_obj.order_filled_date = dt_from_ts(
-                        safe_value_fallback(order, "lastTradeTimestamp", "timestamp")
+                        safe_value_fallback(order, "lastTradeTimestamp", "timestamp").astimezone().replace(tzinfo=None)
                     )
                     trade.orders.append(order_obj)
                     Trade.commit()
@@ -551,21 +558,21 @@ class FreqtradeBot(LoggingMixin):
             Trade.session.refresh(trade)
             if not trade.is_open:
                 # Trade was just closed
-                last_filled_order = max(
-                (o for o in trade.select_filled_orders() if o.order_filled_utc),
-                key=lambda o: o.order_filled_utc,
-            )
-            raw_close = last_filled_order.order_filled_date or datetime.now()
-            if raw_close.tzinfo:
-                trade.close_date = raw_close.replace(tzinfo=None)
-            else:
-                trade.close_date = raw_close
-            self.order_close_notify(
+                    last_filled_order = max(
+                    (o for o in trade.select_filled_orders() if o.order_filled_utc),
+                    key=lambda o: o.order_filled_utc,
+                    )
+                    raw_close = last_filled_order.order_filled_date or datetime.now()
+                    if raw_close.tzinfo:
+                        trade.close_date = raw_close.replace(tzinfo=None)
+                    else:
+                        trade.close_date = raw_close
+                    self.order_close_notify(
                     trade,
                     order_obj,
                     order_obj.ft_order_side == "stoploss",
                     send_msg=prev_trade_state != trade.is_open,
-                )
+                    )
             else:
                 trade.exit_reason = prev_exit_reason
                 total = (
@@ -1606,6 +1613,14 @@ class FreqtradeBot(LoggingMixin):
                 except ExchangeError:
                     logger.info(
                         "Cannot query order for %s due to %s", trade, traceback.format_exc()
+                    )
+                    continue
+
+                except Exception:
+                    logger.error(
+                        "Unexpected error querying order %s for %s: %s. "
+                        "Skipping to prevent bot crash loop.",
+                        open_order.order_id, trade, traceback.format_exc()
                     )
                     continue
 

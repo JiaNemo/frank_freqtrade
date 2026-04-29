@@ -364,12 +364,12 @@ class Okx(Exchange):
         :param orders: OKX返回的订单列表
         :return: 修正后的订单列表
         """
-        timestamp_fields = ["timestamp", "lastTradeTimestamp", "datetime"]
+        timestamp_fields = ["timestamp", "lastTradeTimestamp"]
 
         for order in orders:
             for field in timestamp_fields:
                 if field in order and order[field] is not None:
-                    order[field] = order[field] - OKX_TIMEZONE_OFFSET_MS
+                    order[field] = int(order[field]) - OKX_TIMEZONE_OFFSET_MS
 
         return orders
 
@@ -381,11 +381,11 @@ class Okx(Exchange):
         :param order: OKX返回的单个订单
         :return: 修正后的订单
         """
-        timestamp_fields = ["timestamp", "lastTradeTimestamp", "datetime"]
+        timestamp_fields = ["timestamp", "lastTradeTimestamp"]
 
         for field in timestamp_fields:
             if field in order and order[field] is not None:
-                order[field] = order[field] - OKX_TIMEZONE_OFFSET_MS
+                order[field] = int(order[field]) - OKX_TIMEZONE_OFFSET_MS
 
         return order
 
