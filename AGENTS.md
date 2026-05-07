@@ -124,12 +124,13 @@ fallback: Long -6.0%, Short -5.0%
 | Long | fisher_rsi > 0.5 AND RSI > 70 |
 | Short | fisher_rsi < -0.5 AND RSI > 80 |
 
-### Trailing Stop (时段化)
-| 时段 | Long positive | Long offset | Short positive | Short offset |
-|------|--------------|-------------|---------------|-------------|
-| 0-8am | **1.5%** | 4% | 1.5% | 4% |
-| 9-18h | 3% | **4%** | 1.5% | 2% |
-| 18-21h | 3% | 6% | 1.5% | 4% |
+### Trailing Stop (v19 统一)
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| trailing_stop_positive | **1.5%** (全方向全时段) | 盈利回撤1.5%即平仓 |
+| trailing_stop_positive_offset | **6%** (全方向全时段) | 盈利>6%才启动trailing |
+
+4X下价格需移动1.5%才启动trailing，给足空间"熬到盈利"
 
 ### 冷却与风控 (v19)
 - 同pair+方向止损后cooldown **120min**（7-9am 90min）
@@ -214,7 +215,10 @@ XRP, UNI, INJ, ATOM, FIL, ADA, APT, SUI, COMP, ETH, LINK, SEI, OP, AAVE, SATS, M
 | 常规冷却 | 45min | **120min** | 止损后等更久 |
 | 全局方向冷却 | 无 | **60min** | 任何币止损→该方向所有币60min不再入场 |
 | 方向熔断 | 无 | **2笔同方向stoploss→暂停60min** | 防止连续猎杀 |
-| 凌晨Long trailing_positive | 3% | **1.5%** | 更早追踪但4%offset才锁定 |
+| 凌晨Long trailing_positive | 3% | **1.5%** | 更早追踪但6%offset才锁定 |
+| Short日间trailing offset | 2% | **6%** | Trade901因2%太小刚盈利就被扫出，统一6%给足空间 |
+| Long日间trailing offset | 4% | **6%** | 统一全时段全方向6% offset |
+| 凌晨trailing offset | 4% | **6%** | 同上 |
 | 入场信号 | v18收紧版 | **恢复v18** | 信号照常进，靠止损+冷却控频 |
 
 **数据依据**：今天11笔stop_loss价格只跌0.47%-0.78%，旧止损4X下价格0.625%就触发全部被猎杀；新止损4X下最低1.25%，今天0笔会触发。
