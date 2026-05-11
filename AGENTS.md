@@ -45,38 +45,11 @@ pre-commit run -a
 | Service | freqtrade |
 | Port | 8888 |
 | Config | configLong.json |
-| 策略 | RecoveryStrategyMulti v19 |
+| 策略 | RecoveryStrategyMulti v20 |
 
-### Bot Management
-```bash
-# systemctl
-ssh root@47.108.169.101 "systemctl restart freqtrade"
-ssh root@47.108.169.101 "systemctl status freqtrade"
+...
 
-# API
-curl -s -X POST http://127.0.0.1:8888/api/v1/start -H 'Authorization: Basic ZnJlcXRyYWRlOmZyZXF0cmFkZTEyMw=='
-curl -s -X POST http://127.0.0.1:8888/api/v1/stop -H 'Authorization: Basic ZnJlcXRyYWRlOmZyZXF0cmFkZTEyMw=='
-
-# 快速启动
-./ai/shell/startbot.sh
-```
-
-### OKX WebSocket
-Config中已设置 `ws_enabled: false`。重启后Bot进入STOPPED状态，需调用 `/api/v1/start` 恢复交易。
-
-### Troubleshooting
-- Bot STOPPED after restart: call `/api/v1/start`
-- WebSocket errors: `journalctl -u freqtrade | grep ERROR`
-- RateLimit (code 50011): wait or reduce whitelist size
-
-### 数据库查询
-```bash
-ssh root@47.108.169.101 "sudo -u postgres psql -d trading -c 'SELECT ... FROM trades ORDER BY id DESC LIMIT 10;'"
-```
-
----
-
-## RecoveryStrategyMulti v19 (当前策略)
+## RecoveryStrategyMulti v20 (当前策略)
 
 ### 核心思想
 **熬到盈利** — 大幅放宽止损让交易撑住波动，trailing够宽让利润跑，用max_open_trades控频而非收紧入场信号。
@@ -127,8 +100,8 @@ fallback: Long -6.0%, Short -5.0%
 ### Trailing Stop (v19 统一)
 | 参数 | 值 | 说明 |
 |------|-----|------|
-| trailing_stop_positive | **1.5%** (全方向全时段) | 盈利回撤1.5%即平仓 |
-| trailing_stop_positive_offset | **6%** (全方向全时段) | 盈利>6%才启动trailing |
+| trailing_stop_positive | **5%** (全方向全时段) | 盈利回撤5%即平仓 |
+| trailing_stop_positive_offset | **4%** (全方向全时段) | 盈利>4%才启动trailing |
 
 4X下价格需移动1.5%才启动trailing，给足空间"熬到盈利"
 
@@ -138,14 +111,8 @@ fallback: Long -6.0%, Short -5.0%
 - **方向熔断**：连续2笔同方向stoploss后暂停该方向60min
 - 逆转暂停：连败熔断(open trades>=2笔同方向亏损) + 连续亏损3笔暂停
 
-### 时段方向逆转 (v12 动态逆转)
-| 时段 (CST) | 逆转逻辑 |
-|------------|---------|
-| 0-8am | 动态：滚动3天Short胜率>Long+10%→保持Short，否则S→L |
-| 10am-4pm | 动态：滚动3天Short胜率>Long+10%→保持Short，否则S→L |
-| 7pm-11pm | 动态：滚动3天Long胜率>Short+10%→保持Long，否则L→S |
-
-参数：`no_short_before_hour=8`，动态逆转每5分钟重算
+### 时段方向逆转 (v20 已取消)
+> **v20 取消所有时段逆转，由信号自己决定方向**
 
 ### 黑名单
 - Long: HYPE, TAO, TRUMP
@@ -171,7 +138,7 @@ fallback: Long -6.0%, Short -5.0%
 | max_leverage | 7 |
 | trailing_stop | true |
 | trailing_stop_positive | 0.015 |
-| trailing_stop_positive_offset | 0.02 |
+| trailing_stop_positive_offset | **0.04** |
 | use_custom_stoploss | true |
 | strategy | RecoveryStrategyMulti |
 | ws_enabled | false |
