@@ -49,74 +49,87 @@ pre-commit run -a
 
 ...
 
-## RecoveryStrategyMulti v20 (当前策略)
+## RecoveryStrategyMulti v22 (当前策略)
 
 ### 核心思想
 **熬到盈利** — 大幅放宽止损让交易撑住波动，trailing够宽让利润跑，用max_open_trades控频而非收紧入场信号。
 
 ### 核心参数
-| 参数 | 值 |
-|-----|-----|
-| timeframe | 5m |
-| can_short | True |
-| max_open_trades | 7 |
-| max_hours_before_force_entry | 12 |
-| cooldown_minutes | **120min(常规) / 90min(7-9am)** |
-| profit_target_usdt | **99(已禁用)**，由trailing stop决定退出 |
+| 参数 | 当前值 | 说明 |
+|-----|--------|------|
+| timeframe | 5m | |
+| can_short | True | |
+| max_open_trades | 7 | |
+| max_hours_before_force_entry | 72 | 72小时强制平仓 |
+| cooldown_minutes | 30min | 常规冷却 |
+| profit_target_usdt | **已禁用** | 由trailing stop决定退出 |
+| trailing_stop_positive | 0.03 | 盈利回撤3% |
+| trailing_stop_offset | 0.025 | 盈利>2.5%启动trailing |
 
-### ATR 动态止损 (v19)
+### ATR 动态止损 (v19+)
 | ATR% | 波动状态 | Long止损 | Short止损 |
-|------|---------|---------|----------|
-| < 0.20 | 低波动 | -6.0% | -5.0% |
-| 0.20 - 0.30 | 中波动 | -7.0% | -6.0% |
-| > 0.30 | 高波动 | -8.0% | -7.0% |
+|------|---------|---------|---------|
+| < 0.20 | 低波动 | -7% | -7% |
+| 0.20-0.30 | 中波动 | -8% | -8% |
+| > 0.30 | 高波动 | -10% | -10% |
 
-fallback: Long -6.0%, Short -5.0%
-
-价格触发线(4X)：Long低1.50%/中1.75%/高2.00%, Short低1.25%/中1.50%/高1.75%
+fallback: Long -8%, Short -8%
 
 ### ATR 动态杠杆
 | ATR% | 波动状态 | 杠杆 |
 |----------|---------|------|
 | > 0.35 | 极高波动 | 4X |
-| 0.25 - 0.35 | 高波动 | 5X |
-| 0.15 - 0.25 | 低波动 | 6X |
+| 0.25-0.35 | 高波动 | 5X |
+| 0.15-0.25 | 低波动 | 6X |
 | < 0.15 | 极低波动 | 7X |
 
-### Entry 信号 (v18)
-| 方向 | 条件 |
-|------|------|
-| Long | RSI < 45, slowk < 40, atr% < 2.5, atr% > 0.3, close > EMA200, 15m RSI < 55, rsi_rising(shift1), ema200_slope > 0.005 |
-| Short | RSI > 55, slowk > 35, atr% < 2.0, atr% > 0.3, close < EMA200, 15m RSI > 45, rsi_falling(shift1), ema200_slope < -0.005 |
+### Entry 信号 (v22)
+| 方向 | 条件 | 备注 |
+|------|--------|------|
+| Long | RSI < 45, slowk < 40, ATR% < 2.5, ATR% > 0.3, close > EMA200, 15m RSI < 55, rsi_rising(shift1), ema200_slope > 0.005 | |
+| Short | RSI > 60, slowk > 35, ATR% < 2.0, ATR% > 0.3, close < EMA200, 15m RSI > 45, rsi_falling(shift1), ema200_slope < -0.005 | |
 
-7-9am Long额外限制：RSI<40, slowk<30
+### ADX 趋势过滤 (v22新增)
+| 条件 | 效果 |
+|------|------|
+| ADX > 25 + 做空 | **REJECT** - 趋势市场不做空 |
+| ADX > 25 + Long + 无量确认 | **REJECT** - 谨慎做多 |
+| ADX < 25 | 震荡市场 - 双向可操作 |
+
+### RSI Divergence 检测 (v22新增)
+| 模式 | 条件 | 效果 |
+|------|------|------|
+| 价格创新高 + RSI未跟随 | close > close.shift(5) + RSI < RSI.shift(5) | 潜在见顶信号 |
+| 价格创新低 + RSI未跟随 | close < close.shift(5) + RSI > RSI.shift(5) | 潜在见底信号 |
 
 ### Exit 信号
 | 方向 | 条件 |
-|------|------|
-| Long | fisher_rsi > 0.5 AND RSI > 70 |
-| Short | fisher_rsi < -0.5 AND RSI > 80 |
+|------|--------|
+| Long | fisher_rsi > 0.6 AND RSI > 72 |
+| Short | fisher_rsi < -0.6 AND RSI > 82 |
 
-### Trailing Stop (v19 统一)
+### Trailing Stop (v22 统一)
 | 参数 | 值 | 说明 |
 |------|-----|------|
-| trailing_stop_positive | **5%** (全方向全时段) | 盈利回撤5%即平仓 |
-| trailing_stop_positive_offset | **4%** (全方向全时段) | 盈利>4%才启动trailing |
+| trailing_stop_positive | 3% | 盈利回撤3%即平仓 |
+| trailing_stop_positive_offset | 2.5% | 盈利>2.5%启动trailing |
 
-4X下价格需移动1.5%才启动trailing，给足空间"熬到盈利"
-
-### 冷却与风控 (v19)
-- 同pair+方向止损后cooldown **120min**（7-9am 90min）
-- **全局方向冷却**：任何币stoploss后，该方向所有币60min内不可入场
-- **方向熔断**：连续2笔同方向stoploss后暂停该方向60min
-- 逆转暂停：连败熔断(open trades>=2笔同方向亏损) + 连续亏损3笔暂停
-
-### 时段方向逆转 (v20 已取消)
-> **v20 取消所有时段逆转，由信号自己决定方向**
+### 冷却与风控
+- 同pair+方向止损后cooldown **30min**
+- **全局方向冷却**：任何币stoploss后，该方向所有币30min内不可入场
+- **方向熔断**：连续2笔同方向stoploss后暂停该方向20min
 
 ### 黑名单
-- Long: HYPE, TAO, TRUMP
+- Long: HYPE, TAO, TRUMP, PENDLE, BLUR, ORDI, NEAR, LDO, PEOPLE
 - Short: LDO, BLUR, PEOPLE, ORDI
+
+### 逆势交易过滤 (v22 核心改进)
+| 过滤项 | 条件 | 逻辑 |
+|--------|------|------|
+| ADX趋势确认 | ADX > 25 | 强趋势不做空 |
+| 成交量确认 | volume > volume_sma | 无量不追涨 |
+| RSI背离 | 价格+RSI背离检测 | 潜在反转点预警 |
+| BTC宏观确认 | EMA200斜率 | 全局方向参考 |
 
 ---
 
@@ -212,6 +225,9 @@ XRP, UNI, INJ, ATOM, FIL, ADA, APT, SUI, COMP, ETH, LINK, SEI, OP, AAVE, SATS, M
 | 05-06 | v19 | 止损大幅放宽 Long-6/-7/-8%, Short-5/-6/-7% | 今天0笔止损会触发，旧止损全被猎杀 |
 | 05-06 | v19 | 冷却45→120min, 全局方向冷却60min, 方向熔断 | 控频代替收紧入场 |
 | 05-06 | v19 | 凌晨Long trailing_positive 3%→1.5% | 更早追踪但offset保持4%给空间 |
+| 05-12 | v21 | trailing_stop_positive 0.05→0.03, offset 0.04→0.025, max_hours 12→72, exit信号fisher>0.5→0.6, RSI 70→72/80→82 | 等趋势不等时间 |
+| 05-13 | v22 | RSI Short >55→60, stoploss基础-6%→-10%, ATR档位更新 | 今日Short亏66% |
+| 05-12 | v21a | cooldown 180→30min | 交易量太少，180min太长 |
 | 05-06 | v19 | 入场信号恢复v18, ATR%下限0.3% | 信号照常进 |
 | 05-04 | v15 | EMA200斜率0.01→0.005, 15m RSI±5放宽, RSI动量shift(2)→(1), Long日间offset 3→4% | 横盘信号太严 |
 | 05-04 | v14 | RSI<40→45/slowk<35→40(Long), RSI>60→55/slowk>40→35(Short), Short trailing 2%→1.5% | 增加入场机会 |
