@@ -45,14 +45,14 @@ pre-commit run -a
 | Service | freqtrade |
 | Port | 8888 |
 | Config | configLong.json |
-| 策略 | RecoveryStrategyMulti v20 |
+| 策略 | RecoveryStrategyMulti v24 (优化版) |
 
 ...
 
-## RecoveryStrategyMulti v22 (当前策略)
+## RecoveryStrategyMulti v24 优化版 (当前策略)
 
 ### 核心思想
-**熬到盈利** — 大幅放宽止损让交易撑住波动，trailing够宽让利润跑，用max_open_trades控频而非收紧入场信号。
+**熬到盈利** — 大幅放宽止损让交易撑住波动，trailing够宽让利润跑，用max_open_trades控频而非收紧入场信号。v24增加利润保护机制。
 
 ### 核心参数
 | 参数 | 当前值 | 说明 |
@@ -61,67 +61,77 @@ pre-commit run -a
 | can_short | True | |
 | max_open_trades | 7 | |
 | max_hours_before_force_entry | 72 | 72小时强制平仓 |
-| cooldown_minutes | 30min | 常规冷却 |
+| cooldown_minutes | 15min | 常规冷却 |
 | profit_target_usdt | **已禁用** | 由trailing stop决定退出 |
-| trailing_stop_positive | 0.03 | 盈利回撤3% |
-| trailing_stop_offset | 0.025 | 盈利>2.5%启动trailing |
+| trailing_stop_positive | **0.025** | 盈利回撤2.5% (v24放宽) |
+| trailing_stop_positive_offset | 0.05 | 盈利>5%启动trailing |
+| max_leverage | 5 | 最大杠杆限制 |
 
-### ATR 动态止损 (v19+)
-| ATR% | 波动状态 | Long止损 | Short止损 |
-|------|---------|---------|---------|
-| < 0.20 | 低波动 | -7% | -7% |
-| 0.20-0.30 | 中波动 | -8% | -8% |
-| > 0.30 | 高波动 | -10% | -10% |
+### ATR 动态止损 (v23 反转逻辑)
+| ATR% | 波动状态 | Long止损 | Short止损 | 说明 |
+|------|---------|---------|---------|------|
+| < 0.20 | 低波动 | -6% | -6% | 低波动宽止损避免噪音 |
+| 0.20-0.30 | 中波动 | -5% | -5% | 中波动正常止损 |
+| > 0.30 | 高波动 | -4% | -4% | 高波动紧止损控制风险 |
 
-fallback: Long -8%, Short -8%
+fallback: Long -5%, Short -5%
 
-### ATR 动态杠杆
+### ATR 动态杠杆 (v23 降低)
 | ATR% | 波动状态 | 杠杆 |
 |----------|---------|------|
-| > 0.35 | 极高波动 | 4X |
-| 0.25-0.35 | 高波动 | 5X |
-| 0.15-0.25 | 低波动 | 6X |
-| < 0.15 | 极低波动 | 7X |
+| > 0.35 | 极高波动 | 3X |
+| 0.25-0.35 | 高波动 | 4X |
+| 0.15-0.25 | 低波动 | 4X |
+| < 0.15 | 极低波动 | 5X |
 
-### Entry 信号 (v22)
+### Entry 信号 (v23 收紧)
 | 方向 | 条件 | 备注 |
 |------|--------|------|
-| Long | RSI < 45, slowk < 40, ATR% < 2.5, ATR% > 0.3, close > EMA200, 15m RSI < 55, rsi_rising(shift1), ema200_slope > 0.005 | |
-| Short | RSI > 60, slowk > 35, ATR% < 2.0, ATR% > 0.3, close < EMA200, 15m RSI > 45, rsi_falling(shift1), ema200_slope < -0.005 | |
+| Long | RSI < 40, slowk < 35, ATR% < 2.5, ATR% > 0.4, close > EMA200, 15m RSI < 55, rsi_rising(shift1), ema200_slope > 0.005 | 收紧入场 |
+| Short | RSI > 65, slowk > 40, ATR% < 2.0, ATR% > 0.4, close < EMA200, 15m RSI > 45, rsi_falling(shift1), ema200_slope < -0.005 | 收紧入场 |
 
-### ADX 趋势过滤 (v22新增)
+### ADX 趋势过滤 (v22保留)
 | 条件 | 效果 |
 |------|------|
 | ADX > 25 + 做空 | **REJECT** - 趋势市场不做空 |
 | ADX > 25 + Long + 无量确认 | **REJECT** - 谨慎做多 |
 | ADX < 25 | 震荡市场 - 双向可操作 |
 
-### RSI Divergence 检测 (v22新增)
+### RSI Divergence 检测 (v22保留)
 | 模式 | 条件 | 效果 |
 |------|------|------|
 | 价格创新高 + RSI未跟随 | close > close.shift(5) + RSI < RSI.shift(5) | 潜在见顶信号 |
 | 价格创新低 + RSI未跟随 | close < close.shift(5) + RSI > RSI.shift(5) | 潜在见底信号 |
 
-### Exit 信号
+### Exit 信号 (v24 放宽Long)
 | 方向 | 条件 |
 |------|--------|
-| Long | fisher_rsi > 0.6 AND RSI > 72 |
-| Short | fisher_rsi < -0.6 AND RSI > 82 |
+| Long | fisher_rsi > 0.5 AND RSI > 65 |
+| Short | fisher_rsi < -0.6 AND RSI < 30 |
 
-### Trailing Stop (v22 统一)
+### 利润保护机制 (v24 新增)
+| 触发条件 | 退出原因 | 说明 |
+|----------|----------|------|
+| profit > 3% 且峰值回撤 > 4% | profit_drawdown_exit | 保护3%以上利润 |
+| profit > 5% 且低于峰值80% | high_profit_protection | 高利润时更积极退出 |
+
+### Trailing Stop (v24 调整)
 | 参数 | 值 | 说明 |
 |------|-----|------|
-| trailing_stop_positive | 3% | 盈利回撤3%即平仓 |
-| trailing_stop_positive_offset | 2.5% | 盈利>2.5%启动trailing |
+| trailing_stop_positive | **2.5%** | 盈利回撤2.5%即平仓 (v24放宽) |
+| trailing_stop_positive_offset | 5% | 盈利>5%启动trailing |
+| trailing_offset_day | 5% | 日间激活阈值 |
+| trailing_offset_night | 5% | 夜间激活阈值 |
+| trailing_offset_evening | 5% | 晚间激活阈值 |
 
 ### 冷却与风控
-- 同pair+方向止损后cooldown **30min**
-- **全局方向冷却**：任何币stoploss后，该方向所有币30min内不可入场
-- **方向熔断**：连续2笔同方向stoploss后暂停该方向20min
+- 同pair+方向止损后cooldown **15min**
+- **全局方向冷却**：任何币stoploss后，该方向所有币15min内不可入场
+- **方向熔断**：连续2笔同方向stoploss后暂停该方向10min
 
 ### 黑名单
-- Long: HYPE, TAO, TRUMP, PENDLE, BLUR, ORDI, NEAR, LDO, PEOPLE
-- Short: LDO, BLUR, PEOPLE, ORDI
+- Long: BLUR, ORDI, LDO, PEOPLE, ARB
+- Short: LDO, BLUR, PEOPLE, ORDI, ARB
 
 ### 逆势交易过滤 (v22 核心改进)
 | 过滤项 | 条件 | 逻辑 |
@@ -148,16 +158,16 @@ fallback: Long -8%, Short -8%
 | dry_run | false |
 | trading_mode | futures |
 | margin_mode | isolated |
-| max_leverage | 7 |
+| max_leverage | 5 |
 | trailing_stop | true |
-| trailing_stop_positive | 0.015 |
-| trailing_stop_positive_offset | **0.04** |
+| trailing_stop_positive | **0.025** |
+| trailing_stop_positive_offset | 0.05 |
 | use_custom_stoploss | true |
 | strategy | RecoveryStrategyMulti |
 | ws_enabled | false |
 
-### Whitelist (22 pairs)
-BTC, SOL, BCH, DOGE, AVAX, ARB, ENS, NEAR, BLUR, ENJ, PEOPLE, SHIB, ICP, ORDI, HYPE, TRUMP, BNB, TAO, LDO, ZEC, LTC, PENDLE
+### Whitelist (22 pairs, BCH已移除)
+ARB, NEAR, BLUR, ENJ, ICP, ORDI, HYPE, TAO, ZEC, PENDLE, WIF, RENDER, GRT, DOT, PYTH, JUP, ENA, ONDO, ARKM, CRV, DYDX, THETA
 
 ### Blacklisted Pairs (27 pairs)
 XRP, UNI, INJ, ATOM, FIL, ADA, APT, SUI, COMP, ETH, LINK, SEI, OP, AAVE, SATS, MATIC, MKR, FTM, STG 等
@@ -216,12 +226,28 @@ XRP, UNI, INJ, ATOM, FIL, ADA, APT, SUI, COMP, ETH, LINK, SEI, OP, AAVE, SATS, M
 ### max()空序列Bug (2026-04-27 ✅)
 `order_filled_utc`全为None时`max()`崩溃。修复：先收集到list再判断。
 
+### trailing_offset_evening未定义Bug (2026-05-24 ✅)
+代码引用`trailing_offset_evening`和`trailing_offset_short_evening`但未定义。修复：添加变量定义。
+
+### BCH-USD市场ID歧义Bug (2026-05-26 ✅)
+OKX返回`safeMarket() requires a fourth argument for BCH-USD`警告，BCH有多个相同market id的市场。修复：从whitelist移除BCH。
+
 ---
 
 ## 参数修改历史
 
 | 日期 | 版本 | 修改 | 原因 |
 |-----|------|------|------|
+| 05-26 | v24 | trailing_stop_positive 1.5%→2.5%, offset保持5% | 放宽trailing减少小额亏损 |
+| 05-26 | v24 | Long exit: fisher>0.6→0.5, RSI>72→65 | 放宽exit条件增加主动退出 |
+| 05-26 | v24 | 新增利润保护机制: profit_drawdown_exit, high_profit_protection | 保护已有利润 |
+| 05-26 | v24 | 移除BCH (OKX市场ID歧义bug) | 修复get_tickers警告 |
+| 05-24 | v23 Plan B | Long入场RSI <45→<40, slowk <40→<35; Short入场RSI >60→>65, slowk >35→>40 | 收紧入场提高信号质量 |
+| 05-24 | v23 Plan B | max_leverage 7→5, ATR杠杆 4-7X→3-5X | 降低杠杆减少止损触发 |
+| 05-24 | v23 Plan B | Trailing offset 8%→5%, positive 2.5%→1.5% | 更早激活trailing保护利润 |
+| 05-24 | v23 Plan B | ATR止损反转: 低波动-4%→-6%, 高波动-6%→-4% | 低波动宽止损避免噪音 |
+| 05-24 | v23 Plan B | Short exit RSI >82→<30 | 修复Short exit在超卖区域退出 |
+| 05-24 | v23 Plan B | Bug修复: trailing_offset_evening未定义 | 代码bug |
 | 05-06 | v19 | 止损大幅放宽 Long-6/-7/-8%, Short-5/-6/-7% | 今天0笔止损会触发，旧止损全被猎杀 |
 | 05-06 | v19 | 冷却45→120min, 全局方向冷却60min, 方向熔断 | 控频代替收紧入场 |
 | 05-06 | v19 | 凌晨Long trailing_positive 3%→1.5% | 更早追踪但offset保持4%给空间 |
@@ -235,3 +261,39 @@ XRP, UNI, INJ, ATOM, FIL, ADA, APT, SUI, COMP, ETH, LINK, SEI, OP, AAVE, SATS, M
 | 04-29 | v6 | 时段方向逆转(0-8am S→L, 6-7am L→S, 10am-3pm S→L) | 时段胜率差异 |
 | 04-27 | v3 | 白名单扩充20→22, ATR杠杆5X档, 止损放宽0.5% | 交易机会+止损过紧 |
 | 04-26 | v2 | ATR动态止损替代固定止损 | 盈亏比失衡 |
+
+---
+
+## custom_exit 改进方案 [v24 已实施 ✅]
+
+### 问题
+开始盈利 → 持仓一段时间后大亏。Peak利润回撤太多。
+
+### 方案
+实现`custom_exit`方法，基于峰谷回撤触发exit。
+
+| 参数 | 值 | 含义 |
+|-----|-----|------|
+| X (监控阈值) | 3% | profit需达到3%才开始监控回撤 |
+| Y (回撤触发 | 4% | 从峰值回撤4%触发exit |
+
+### 实现代码
+```python
+if current_profit > 0.03:
+    peak_profit = trade.calc_profit_ratio(trade.max_rate)
+    if peak_profit - current_profit > 0.04:
+        return "profit_drawdown_exit"
+
+if current_profit > 0.05:
+    if current_profit < peak_profit * 0.8:
+        return "high_profit_protection"
+```
+
+### 数据支持 (500笔交易分析)
+- 盈利交易75%分位数峰值：1.26%
+- 盈利交易90%分位数峰值：2.94%
+- 止损交易75%分位数峰值：2.79%
+- 当前持仓峰值<1%，X=3%可过滤假信号
+
+### 状态
+- **已实施** ✅ - v24已部署到服务器 (2026-05-26)
